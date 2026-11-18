@@ -1,0 +1,240 @@
+package com.nbstudio;
+
+import android.app.Activity;
+import android.app.AlertDialog;
+import android.content.*;
+import android.content.ClipboardManager;
+import android.graphics.PorterDuff;
+import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
+import android.net.Uri;
+import android.os.*;
+import android.text.*;
+import android.text.style.*;
+import android.util.TypedValue;
+import android.view.*;
+import android.widget.*;
+import java.io.*;
+import java.util.*;
+import java.util.regex.*;
+import android.content.res.ColorStateList;
+import android.graphics.drawable.RippleDrawable;
+import org.luaj.vm2.Globals;
+import org.luaj.vm2.LuaError;
+import org.luaj.vm2.LuaValue;
+import org.luaj.vm2.lib.OneArgFunction;
+import org.luaj.vm2.lib.jse.JsePlatform;
+
+public class MainActivity extends Activity {
+  static final int BG=0xFF1D1F23,PN=0xFF292C31,TX=0xFFD6D9DE,AC=0xFF0FA3FF,ER=0xFFFF5C6C,WR=0xFFFFC857;
+  static final Pattern LX=Pattern.compile("(--\\[(=*)\\[[\\s\\S]*?\\]\\2\\])|(--[^\\n]*)|(\\[(=*)\\[[\\s\\S]*?\\]\\5\\])|(\"(?:\\\\[\\s\\S]|[^\"\\\\\\n])*\"?)|('(?:\\\\[\\s\\S]|[^'\\\\\\n])*'?)|(0[xX][0-9a-fA-F]+|\\d+\\.?\\d*(?:[eE][+-]?\\d+)?)|([A-Za-z_]\\w*)|(\\.\\.\\.|\\.\\.|==|~=|<=|>=|!=|&&|\\|\\||[+\\-*/]=|\\+\\+|\\S)");
+  static final Pattern IND=Pattern.compile("(\\bthen|\\bdo|\\belse|\\brepeat)\\s*$|\\bfunction\\b.*\\)\\s*$");
+  static final Set<String> KW=new HashSet<>(Arrays.asList("and break do else elseif end false for function goto if in local nil not or repeat return then true until while".split(" ")));
+  static final Set<String> BI=new HashSet<>(Arrays.asList("print pairs ipairs math string table tonumber tostring type select error pcall next unpack os Server GameObjectManager ClientInfo LogicGameObject LogicCharacter Skill TileMap Tile ArrayList".split(" ")));
+  static class Ent{char k;String n,nl,d,ins,tpl,h;int off,p;float sc;}
+  static class Tk{char t;String v;int s,e,line;boolean bad,d;}
+  static class Pr{int line;String msg;boolean warn;}
+  static abstract class W implements TextWatcher{public void beforeTextChanged(CharSequence s,int a,int b,int c){}public void onTextChanged(CharSequence s,int a,int b,int c){}}
+  static class HL extends ForegroundColorSpan{HL(int c){super(c);}}
+
+  EditText et;TextView gut,badge;ImageButton warnBtn;LinearLayout bar,popRows;PopupWindow pop;SharedPreferences sp;
+  ArrayList<Ent> ents=new ArrayList<>();ArrayList<Pr> err=new ArrayList<>();
+  String word="";int fs=15;boolean quiet;Handler hd=new Handler(Looper.getMainLooper());
+  Globals chk;
+  Runnable lr=()->{String s=et.getText().toString();err=full(s);gutter();badge();sp.edit().putString("src",s).apply();};
+
+  int dp(int v){return Math.round(v*getResources().getDisplayMetrics().density);}
+  void toast(String s){Toast.makeText(this,s,Toast.LENGTH_SHORT).show();}
+  static String norm(String s){return s.replace("\r\n","\n").replace('\r','\n').replace("\t","  ");}
+
+  @Override protected void onCreate(Bundle b){
+    super.onCreate(b);getWindow().setStatusBarColor(PN);getWindow().setNavigationBarColor(PN);sp=getSharedPreferences("nb",0);fs=sp.getInt("fs",15);loadData();
+    LinearLayout root=new LinearLayout(this);root.setOrientation(LinearLayout.VERTICAL);root.setBackgroundColor(BG);
+    bar=new LinearLayout(this);bar.setOrientation(LinearLayout.VERTICAL);bar.setBackgroundColor(PN);
+    LinearLayout ttl=new LinearLayout(this);ttl.setGravity(Gravity.CENTER_VERTICAL);ttl.setPadding(dp(16),dp(12),dp(16),dp(4));
+    ImageView lg=new ImageView(this);lg.setImageResource(R.drawable.ic_term);lg.setColorFilter(AC,PorterDuff.Mode.SRC_IN);ttl.addView(lg,new LinearLayout.LayoutParams(dp(24),dp(24)));
+    TextView tt=new TextView(this);tt.setText("NB Script Studio");tt.setTextColor(TX);tt.setTextSize(17);tt.setTypeface(Typeface.DEFAULT_BOLD);tt.setPadding(dp(10),0,0,0);ttl.addView(tt);
+    TextView sub=new TextView(this);sub.setText("Lua · Null's Brawl");sub.setTextColor(0xFF8A919B);sub.setTextSize(12);sub.setPadding(dp(10),dp(3),0,0);ttl.addView(sub);
+    bar.addView(ttl);
+    LinearLayout icons=new LinearLayout(this);icons.setPadding(dp(8),dp(2),dp(8),dp(6));
+    String[][] bt={{"run","Виртуальный запуск"},{"new","Новый скрипт"},{"paste","Вставить"},{"copy","Копировать"},{"snip","Шаблоны"},{"data","Данные игры"},{"file","Файл"},{"warn","Ошибки"},{"gear","Настройки"}};
+    for(String[] x:bt){FrameLayout f=new FrameLayout(this);ImageButton ib=new ImageButton(this);
+      ib.setImageResource(getResources().getIdentifier("ic_"+x[0],"drawable",getPackageName()));ib.setBackground(ripple(0,dp(12)));ib.setContentDescription(x[1]);
+      if(x[0].equals("run"))ib.setColorFilter(0xFF5BD98B,PorterDuff.Mode.SRC_IN);
+      ib.setPadding(dp(10),dp(10),dp(10),dp(10));ib.setOnClickListener(v->act(x[0]));f.addView(ib,new FrameLayout.LayoutParams(-1,dp(44)));
+      if(x[0].equals("warn")){warnBtn=ib;badge=new TextView(this);badge.setTextColor(0xFFFFFFFF);badge.setTextSize(10);badge.setTypeface(Typeface.DEFAULT_BOLD);badge.setGravity(Gravity.CENTER);badge.setPadding(dp(5),0,dp(5),0);badge.setMinWidth(dp(16));badge.setBackground(pill(ER,dp(8)));badge.setVisibility(View.GONE);
+        FrameLayout.LayoutParams bp=new FrameLayout.LayoutParams(-2,dp(16),Gravity.END|Gravity.TOP);bp.setMargins(0,dp(2),dp(2),0);f.addView(badge,bp);}
+      icons.addView(f,new LinearLayout.LayoutParams(0,-2,1));}
+    bar.addView(icons);View dv=new View(this);dv.setBackgroundColor(0xFF383C42);bar.addView(dv,new LinearLayout.LayoutParams(-1,dp(1)));
+    root.addView(bar,new LinearLayout.LayoutParams(-1,-2));
+    ScrollView sv=new ScrollView(this);sv.setFillViewport(true);LinearLayout row=new LinearLayout(this);
+    gut=new TextView(this);gut.setTextColor(0xFF5F6671);gut.setBackgroundColor(0xFF191B1E);gut.setGravity(Gravity.END);gut.setPadding(dp(6),dp(10),dp(8),dp(60));
+    et=new EditText(this);et.setBackground(null);et.setTextColor(TX);et.setHorizontallyScrolling(true);et.setGravity(Gravity.TOP|Gravity.START);
+    et.setPadding(dp(10),dp(10),dp(10),dp(60));et.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE|InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS|InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD);
+    et.setFilters(new InputFilter[]{(src,a,z,dst,ds,de)->{
+      if(z-a==1&&src.charAt(a)=='\n'){String d=dst.toString().substring(0,ds);String ln=d.substring(d.lastIndexOf('\n')+1);int j=0;while(j<ln.length()&&ln.charAt(j)==' ')j++;
+        return "\n"+ln.substring(0,j)+(IND.matcher(ln).find()?"  ":"");}return null;}});
+    applyFont();et.setHighlightColor(0x550FA3FF);
+    HorizontalScrollView hv=new HorizontalScrollView(this);hv.setFillViewport(true);hv.setHorizontalScrollBarEnabled(false);hv.addView(et,new FrameLayout.LayoutParams(-2,-1));
+    row.addView(gut,new LinearLayout.LayoutParams(-2,-1));row.addView(hv,new LinearLayout.LayoutParams(0,-1,1));sv.addView(row);
+    root.addView(sv,new LinearLayout.LayoutParams(-1,0,1));
+    HorizontalScrollView hs=new HorizontalScrollView(this);hs.setBackgroundColor(PN);LinearLayout sy=new LinearLayout(this);
+    sy.setPadding(dp(6),dp(6),dp(6),dp(6));
+    for(String s:"⇥ ( ) [ ] { } . : = == ~= \" , # _ + - * / < >".split(" ")){TextView t=new TextView(this);t.setText(s);t.setGravity(Gravity.CENTER);t.setMinWidth(dp(42));t.setTextColor(TX);t.setTextSize(17);t.setTypeface(Typeface.MONOSPACE);t.setPadding(dp(10),0,dp(10),0);t.setBackground(ripple(0xFF383C44,dp(10)));
+      t.setOnClickListener(v->ins(s.equals("⇥")?"  ":s));LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-2,dp(40));lp.setMargins(dp(3),0,dp(3),0);sy.addView(t,lp);}
+    hs.addView(sy);root.addView(hs,new LinearLayout.LayoutParams(-1,-2));
+    setContentView(root);
+    popRows=new LinearLayout(this);popRows.setOrientation(LinearLayout.VERTICAL);popRows.setPadding(dp(4),dp(4),dp(4),dp(4));ScrollView ps=new ScrollView(this);ps.addView(popRows);
+    pop=new PopupWindow(ps,-2,-2);pop.setFocusable(false);pop.setInputMethodMode(PopupWindow.INPUT_METHOD_NOT_NEEDED);pop.setElevation(dp(8));
+    GradientDrawable gd=new GradientDrawable();gd.setColor(PN);gd.setStroke(dp(1),0xFF4A4F57);gd.setCornerRadius(dp(12));pop.setBackgroundDrawable(gd);
+    et.setText(sp.getString("src","-- NB Script Studio\n-- Начни печатать: подсказки появятся над строкой.\n-- Попробуй: shel, Server, getChar, takeDam\n\nlocal count = Server.playersCount\n"));
+    et.addTextChangedListener(new W(){public void afterTextChanged(Editable e){refresh(e);}});
+    et.setOnFocusChangeListener((v,h)->{if(!h)hidePop();});
+    refresh(et.getText());quiet=false;
+  }
+  @Override protected void onPause(){super.onPause();sp.edit().putString("src",et.getText().toString()).apply();hidePop();}
+
+  void applyFont(){for(TextView t:new TextView[]{et,gut}){t.setTypeface(Typeface.MONOSPACE);t.setTextSize(TypedValue.COMPLEX_UNIT_SP,fs);t.setIncludeFontPadding(false);t.setLineSpacing(0,1.2f);}sp.edit().putInt("fs",fs).apply();}
+
+  void loadData(){try{BufferedReader r=new BufferedReader(new InputStreamReader(getAssets().open("data.txt"),"UTF-8"));String l;
+    while((l=r.readLine())!=null){String[] f=l.split("\t",-1);if(f.length<7)continue;Ent e=new Ent();e.k=f[0].charAt(0);e.n=f[1];e.nl=e.n.toLowerCase();e.d=f[2];e.ins=f[3].isEmpty()?null:f[3];e.off=f[4].isEmpty()?-1:Integer.parseInt(f[4]);e.h=f[5];e.tpl=f[6].replace("\\n","\n");
+      e.p=(e.k=='k'||e.k=='s')?0:(e.k=='g'||e.k=='b')?1:e.k=='d'?2:3;ents.add(e);}r.close();}catch(Exception x){toast("Нет data.txt");}}
+
+  GradientDrawable pill(int c,int r){GradientDrawable g=new GradientDrawable();g.setColor(c);g.setCornerRadius(r);return g;}
+  RippleDrawable ripple(int base,int r){return new RippleDrawable(ColorStateList.valueOf(0x33FFFFFF),base==0?null:pill(base,r),pill(0xFFFFFFFF,r));}
+  int kc(char k){switch(k){case 'm':return 0xFFFDFBAC;case 'f':return 0xFFC3D1FF;case 'd':return 0xFFADF195;case 's':return 0xFFC792EA;case 'k':return 0xFFF86D7C;case 'b':case 'g':return 0xFF84D6F7;}return 0xFF8A919B;}
+  // ---------- лексер, подсветка, проверка ----------
+  ArrayList<Tk> lex(String src){ArrayList<Tk> out=new ArrayList<>();Matcher m=LX.matcher(src);int line=1,last=0;
+    while(m.find()){for(int i=last;i<m.start();i++)if(src.charAt(i)=='\n')line++;Tk k=new Tk();k.v=m.group();k.s=m.start();k.e=m.end();k.line=line;
+      k.t=(m.group(1)!=null||m.group(3)!=null)?'c':(m.group(4)!=null||m.group(6)!=null||m.group(7)!=null)?'s':m.group(8)!=null?'n':m.group(9)!=null?'i':'o';
+      if((m.group(6)!=null||m.group(7)!=null)&&(k.v.length()<2||k.v.charAt(k.v.length()-1)!=k.v.charAt(0)))k.bad=true;
+      for(int i=0;i<k.v.length();i++)if(k.v.charAt(i)=='\n')line++;last=m.end();out.add(k);}
+    return out;}
+  int color(ArrayList<Tk> t,int j){Tk k=t.get(j);if(k.bad)return 0xFFFF8A8A;if(k.t=='c')return 0xFF6F7D6F;if(k.t=='s')return 0xFFADF195;if(k.t=='n')return 0xFFFFC600;if(k.t!='i')return 0;
+    boolean mem=j>0&&(t.get(j-1).v.equals(".")||t.get(j-1).v.equals(":")),call=j+1<t.size()&&t.get(j+1).v.equals("(");
+    if(mem)return call?0xFFFDFBAC:0xFFC3D1FF;if(k.v.equals("nil")||k.v.equals("true")||k.v.equals("false"))return 0xFFFFC600;
+    if(KW.contains(k.v))return 0xFFF86D7C;if(BI.contains(k.v))return 0xFF84D6F7;return call?0xFFFDFBAC:0;}
+  void refresh(Editable e){for(HL o:e.getSpans(0,e.length(),HL.class))e.removeSpan(o);
+    ArrayList<Tk> t=lex(e.toString());for(int j=0;j<t.size();j++){int c=color(t,j);if(c!=0)e.setSpan(new HL(c),t.get(j).s,t.get(j).e,Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);}
+    gutter();if(!quiet)ac();hd.removeCallbacks(lr);hd.postDelayed(lr,350);}
+  void gutter(){String s=et.getText().toString();int n=1;for(int i=0;i<s.length();i++)if(s.charAt(i)=='\n')n++;
+    SpannableStringBuilder g=new SpannableStringBuilder();
+    for(int i=1;i<=n;i++){int a=g.length();g.append(String.valueOf(i));int c=0;for(Pr p:err)if(p.line==i){if(!p.warn)c=ER;else if(c==0)c=WR;}
+      if(c!=0){g.setSpan(new BackgroundColorSpan(c),a,g.length(),0);g.setSpan(new ForegroundColorSpan(c==WR?0xFF000000:0xFFFFFFFF),a,g.length(),0);}if(i<n)g.append('\n');}
+    gut.setText(g);}
+  void badge(){int n=err.size();boolean e=false;for(Pr p:err)if(!p.warn)e=true;
+    if(n==0){warnBtn.clearColorFilter();badge.setVisibility(View.GONE);}else{warnBtn.setColorFilter(e?ER:WR,PorterDuff.Mode.SRC_IN);badge.setText(String.valueOf(n));badge.setBackground(pill(e?ER:WR,dp(8)));badge.setVisibility(View.VISIBLE);}}
+  static String badOp(String v){switch(v){case "!=":return "В Lua «не равно» пишется ~=";case "&&":return "В Lua вместо && пишется and";case "||":return "В Lua вместо || пишется or";
+    case "+=":case "-=":case "*=":case "/=":return "В Lua нет "+v+", пиши x = x + 1";case "++":return "В Lua нет ++, пиши x = x + 1";}return null;}
+  void add(ArrayList<Pr> P,int l,String m,boolean w){Pr p=new Pr();p.line=l;p.msg=m;p.warn=w;P.add(p);}
+  ArrayList<Pr> lint(ArrayList<Tk> t){ArrayList<Pr> P=new ArrayList<>();ArrayList<Tk> st=new ArrayList<>(),br=new ArrayList<>();
+    for(int j=0;j<t.size();j++){Tk k=t.get(j);String v=k.v;if(k.bad)add(P,k.line,"Строка не закрыта: не хватает кавычки",false);
+      if(k.t=='o'){String m=badOp(v);
+        if(m!=null)add(P,k.line,m,false);
+        else if(v.equals("(")||v.equals("[")||v.equals("{"))br.add(k);
+        else if(v.equals(")")||v.equals("]")||v.equals("}")){if(br.isEmpty())add(P,k.line,"Лишняя закрывающая скобка "+v,false);
+          else{Tk o=br.remove(br.size()-1);if(!o.v.equals(v.equals(")")?"(":v.equals("]")?"[":"{"))add(P,k.line,"Скобка "+o.v+" из строки "+o.line+" закрыта как "+v,false);}}}
+      else if(k.t=='i'&&!(j>0&&(t.get(j-1).v.equals(".")||t.get(j-1).v.equals(":")))){
+        switch(v){
+          case "function":case "if":case "repeat":st.add(k);break;
+          case "for":case "while":st.add(k);break;
+          case "do":{Tk s=st.isEmpty()?null:st.get(st.size()-1);if(s!=null&&(s.v.equals("for")||s.v.equals("while"))&&!s.d)s.d=true;else st.add(k);break;}
+          case "end":{if(st.isEmpty())add(P,k.line,"Лишний end: закрывать нечего",false);else{Tk s=st.remove(st.size()-1);if(s.v.equals("repeat"))add(P,k.line,"repeat из строки "+s.line+" закрывается через until, а не end",false);}break;}
+          case "until":{if(!st.isEmpty()&&st.get(st.size()-1).v.equals("repeat"))st.remove(st.size()-1);else add(P,k.line,"until без repeat",false);break;}
+          case "null":case "NULL":add(P,k.line,"В Lua пустое значение называется nil",true);break;}}}
+    for(Tk k:st)add(P,k.line,"Не закрыт "+k.v+": не хватает "+(k.v.equals("repeat")?"until":"end"),false);
+    for(Tk k:br)add(P,k.line,"Не закрыта скобка "+k.v,false);
+    Collections.sort(P,(a,b)->a.line-b.line);return P;}
+
+  // ---------- подсказки над строкой ----------
+  void hidePop(){if(pop!=null&&pop.isShowing())pop.dismiss();}
+  void ac(){int p=et.getSelectionStart();if(p<0||p!=et.getSelectionEnd()){hidePop();return;}
+    String v=et.getText().toString();int i=p;while(i>0&&(Character.isLetterOrDigit(v.charAt(i-1))||v.charAt(i-1)=='_'))i--;
+    word=v.substring(i,p);boolean dot=i>0&&(v.charAt(i-1)=='.'||v.charAt(i-1)==':');
+    if((word.isEmpty()&&!dot)||(!word.isEmpty()&&Character.isDigit(word.charAt(0)))){hidePop();return;}
+    final String q=word.toLowerCase();ArrayList<Ent> r=new ArrayList<>();
+    for(Ent e:ents){if(dot&&e.k!='m'&&e.k!='f')continue;float ms=0;
+      if(!q.isEmpty()){if(!e.h.contains(q))continue;int j=e.nl.indexOf(q);ms=j==0?0:j>0?1+j/100f:2;}e.sc=ms*10+e.p;r.add(e);}
+    Collections.sort(r,(a,b)->a.sc!=b.sc?Float.compare(a.sc,b.sc):a.n.length()!=b.n.length()?a.n.length()-b.n.length():a.n.compareTo(b.n));
+    if(r.size()>40)r=new ArrayList<>(r.subList(0,40));
+    if(r.isEmpty()||(r.size()==1&&r.get(0).n.equals(word))){hidePop();return;}
+    final int ws=i,pe=p;popRows.removeAllViews();
+    for(Ent e:r){LinearLayout row=new LinearLayout(this);row.setGravity(Gravity.CENTER_VERTICAL);row.setMinimumHeight(dp(42));row.setPadding(dp(10),dp(4),dp(10),dp(4));row.setBackground(ripple(0,dp(8)));
+      TextView a=new TextView(this);SpannableString ss=new SpannableString(e.n);int j=q.isEmpty()?-1:e.nl.indexOf(q);
+      if(j>=0){ss.setSpan(new ForegroundColorSpan(AC),j,j+q.length(),0);ss.setSpan(new StyleSpan(Typeface.BOLD),j,j+q.length(),0);}
+      a.setText(ss);a.setTextColor(TX);a.setTypeface(Typeface.MONOSPACE);a.setTextSize(14);
+      TextView d=new TextView(this);d.setText(e.d);d.setTextColor(kc(e.k));d.setTextSize(12);d.setPadding(dp(14),dp(2),0,0);d.setSingleLine(true);d.setMaxWidth(dp(190));d.setEllipsize(TextUtils.TruncateAt.END);
+      row.addView(a);row.addView(d);row.setOnClickListener(x->apply(e,ws,pe));popRows.addView(row);}
+    popRows.measure(View.MeasureSpec.UNSPECIFIED,View.MeasureSpec.UNSPECIFIED);
+    int sw=getResources().getDisplayMetrics().widthPixels,w=Math.min(popRows.getMeasuredWidth()+dp(4),sw-dp(8)),h=Math.min(popRows.getMeasuredHeight()+dp(2),dp(220));
+    Layout L=et.getLayout();if(L==null)return;int ln=L.getLineForOffset(ws);int[] loc=new int[2],bl=new int[2];et.getLocationInWindow(loc);bar.getLocationInWindow(bl);
+    int x=loc[0]+et.getCompoundPaddingLeft()+(int)L.getPrimaryHorizontal(ws)-et.getScrollX();
+    int top=loc[1]+et.getExtendedPaddingTop()+L.getLineTop(ln),bot=loc[1]+et.getExtendedPaddingTop()+L.getLineBottom(ln);
+    int y=top-h-dp(4);if(y<bl[1]+bar.getHeight())y=bot+dp(4);x=Math.max(dp(4),Math.min(x,sw-w-dp(4)));
+    if(pop.isShowing())pop.update(x,y,w,h);else{pop.setWidth(w);pop.setHeight(h);pop.showAtLocation(et,Gravity.NO_GRAVITY,x,y);}}
+  void apply(Ent e,int s,int p){Editable ed=et.getText();String v=ed.toString();String t=e.n;int off=-1;
+    if(e.k=='s'){int ls=v.lastIndexOf('\n',s-1)+1,j=ls;while(j<v.length()&&v.charAt(j)==' ')j++;t=e.tpl.replace("\n","\n"+v.substring(ls,j));off=t.indexOf("$0");t=t.replace("$0","");}
+    else if(e.ins!=null&&!(p<v.length()&&v.charAt(p)=='(')){t=e.ins;off=e.off;}
+    quiet=true;ed.replace(s,p,t);quiet=false;et.requestFocus();et.setSelection(s+(off>=0?off:t.length()));hidePop();}
+  void ins(String s){int a=Math.min(et.getSelectionStart(),et.getSelectionEnd()),z=Math.max(et.getSelectionStart(),et.getSelectionEnd());et.getText().replace(a,z,s);}
+  void goTo(int l){String s=et.getText().toString();int p=0;for(int i=1;i<l;i++){int q=s.indexOf('\n',p);if(q<0)break;p=q+1;}et.requestFocus();et.setSelection(p);}
+
+  // ---------- кнопки ----------
+  void act(String id){hidePop();ClipboardManager cm=(ClipboardManager)getSystemService(Context.CLIPBOARD_SERVICE);
+    switch(id){
+      case "run":runSim();break;
+      case "new":et.setText("");toast("Пустой скрипт");break;
+      case "paste":{ClipData c=cm.getPrimaryClip();if(c!=null&&c.getItemCount()>0)ins(norm(c.getItemAt(0).coerceToText(this).toString()));break;}
+      case "copy":cm.setPrimaryClip(ClipData.newPlainText("script",et.getText().toString()));toast("Скопировано");break;
+      case "snip":{ArrayList<Ent> sn=new ArrayList<>();ArrayList<String> nm=new ArrayList<>();for(Ent e:ents)if(e.k=='s'){sn.add(e);nm.add(e.n+"   "+e.d);}
+        new AlertDialog.Builder(this).setTitle("Шаблоны").setItems(nm.toArray(new String[0]),(d,i)->{int p=et.getSelectionStart();apply(sn.get(i),p,p);}).show();break;}
+      case "data":dataDlg();break;
+      case "file":new AlertDialog.Builder(this).setItems(new String[]{"Сохранить как .lua","Открыть файл"},(d,i)->{
+          Intent n=new Intent(i==0?Intent.ACTION_CREATE_DOCUMENT:Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*");
+          if(i==0)n.putExtra(Intent.EXTRA_TITLE,"script.lua");startActivityForResult(n,i);}).show();break;
+      case "warn":{err=full(et.getText().toString());gutter();badge();AlertDialog.Builder d=new AlertDialog.Builder(this).setTitle("Ошибки и предупреждения");
+        if(err.isEmpty())d.setMessage("Ошибок не найдено. Блоки и скобки сходятся.");else{String[] it=new String[err.size()];for(int i=0;i<it.length;i++)it[i]="Строка "+err.get(i).line+": "+err.get(i).msg;
+          d.setItems(it,(x,i)->goTo(err.get(i).line));}d.show();break;}
+      case "gear":new AlertDialog.Builder(this).setTitle("Размер шрифта: "+fs).setItems(new String[]{"Крупнее","Мельче"},(d,i)->{fs=Math.max(11,Math.min(24,fs+(i==0?1:-1)));applyFont();gutter();}).show();break;}}
+  void dataDlg(){LinearLayout l=new LinearLayout(this);l.setOrientation(LinearLayout.VERTICAL);l.setPadding(dp(16),dp(8),dp(16),0);EditText q=new EditText(this);q.setHint("shelly, Wall, Projectile…");q.setSingleLine(true);
+    ListView lv=new ListView(this);ArrayList<Ent> shown=new ArrayList<>();ArrayAdapter<String> ad=new ArrayAdapter<>(this,android.R.layout.simple_list_item_1,new ArrayList<String>());lv.setAdapter(ad);
+    Runnable f=()->{String s=q.getText().toString().toLowerCase().trim();shown.clear();ad.clear();for(Ent e:ents)if(e.p==2&&(s.isEmpty()||e.h.contains(s))){shown.add(e);ad.add(e.n+"   ·   "+e.d);if(shown.size()>=80)break;}};
+    q.addTextChangedListener(new W(){public void afterTextChanged(Editable e){f.run();}});f.run();l.addView(q);l.addView(lv);
+    AlertDialog d=new AlertDialog.Builder(this).setTitle("Данные игры").setView(l).create();
+    lv.setOnItemClickListener((p,v,i,id)->{d.dismiss();int c=et.getSelectionStart();apply(shown.get(i),c,c);});d.show();}
+  @Override protected void onActivityResult(int rq,int rs,Intent d){if(rs!=RESULT_OK||d==null||d.getData()==null)return;
+    try{Uri u=d.getData();if(rq==0){OutputStream o=getContentResolver().openOutputStream(u,"wt");o.write(et.getText().toString().getBytes("UTF-8"));o.close();toast("Сохранено");}
+      else{InputStream in=getContentResolver().openInputStream(u);ByteArrayOutputStream bo=new ByteArrayOutputStream();byte[] bf=new byte[8192];int c;while((c=in.read(bf))>0)bo.write(bf,0,c);in.close();et.setText(norm(bo.toString("UTF-8")));}}
+    catch(Exception x){toast("Ошибка файла");}}
+
+  // ---------- проверка Lua и виртуальный запуск ----------
+  Globals luaGlobals(){Globals g=JsePlatform.standardGlobals();for(String n:new String[]{"os","io","luajava","require","dofile","loadfile"})g.set(n,LuaValue.NIL);return g;}
+  ArrayList<Pr> full(String s){ArrayList<Pr> P=lint(lex(s));boolean bad=false;for(Pr p:P)if(!p.warn)bad=true;
+    if(!bad){try{if(chk==null)chk=luaGlobals();chk.load(s,"script");}
+      catch(LuaError e){String m=String.valueOf(e.getMessage());Matcher x=Pattern.compile("script:(\\d+):?\\s*(.*)",Pattern.DOTALL).matcher(m);
+        if(x.find())add(P,Integer.parseInt(x.group(1)),"Синтаксис Lua: "+x.group(2).trim(),false);else add(P,1,"Синтаксис Lua: "+m,false);}
+      catch(Throwable t){}}
+    Collections.sort(P,(a,b)->a.line-b.line);return P;}
+  String readAsset(String n)throws IOException{InputStream in=getAssets().open(n);ByteArrayOutputStream bo=new ByteArrayOutputStream();byte[] b=new byte[4096];int c;while((c=in.read(b))>0)bo.write(b,0,c);in.close();return bo.toString("UTF-8");}
+  static String ruErr(String m){m=String.valueOf(m).replaceAll("script:(\\d+):?\\s*","строка $1: ");
+    if(m.contains("attempt to index"))m+="  (обращение к полю у пустого значения nil)";
+    else if(m.contains("attempt to call"))m+="  (вызов того, что не является функцией; возможно, опечатка в имени)";
+    else if(m.contains("attempt to perform arithmetic"))m+="  (математика с пустым или неподходящим значением)";
+    else if(m.contains("attempt to compare"))m+="  (сравнение разных типов значений)";return m;}
+  void runSim(){hidePop();String src=et.getText().toString();ArrayList<Pr> P=full(src);boolean bad=false;for(Pr p:P)if(!p.warn)bad=true;
+    if(bad){err=P;gutter();badge();toast("Сначала исправь ошибки");act("warn");return;}
+    final StringBuilder out=new StringBuilder();final boolean[] fin={false};
+    Thread t=new Thread(()->{try{Globals g=luaGlobals();
+        g.set("__log",new OneArgFunction(){@Override public LuaValue call(LuaValue a){synchronized(out){if(out.length()<30000)out.append("• ").append(a.tojstring()).append("\n");}return LuaValue.NIL;}});
+        g.load(readAsset("sim.lua"),"sim").call();g.load(src,"script").call();}
+      catch(LuaError e){synchronized(out){out.append("\n✖ Ошибка выполнения: ").append(ruErr(e.getMessage())).append("\n");}}
+      catch(Throwable x){synchronized(out){out.append("\n✖ ").append(String.valueOf(x)).append("\n");}}
+      runOnUiThread(()->{if(!fin[0]){fin[0]=true;showRun(out);}});});
+    t.setDaemon(true);t.start();
+    hd.postDelayed(()->{if(!fin[0]){fin[0]=true;synchronized(out){out.append("\n⏱ Скрипт не завершился за 3 секунды (возможно, бесконечный цикл).\n");}showRun(out);}},3000);}
+  void showRun(StringBuilder out){String s;synchronized(out){s=out.toString();}if(s.trim().isEmpty())s="Скрипт выполнился, но ничего не изменил и не вывел.";
+    TextView tv=new TextView(this);SpannableStringBuilder sb=new SpannableStringBuilder("Симуляция: игроки и объекты вымышлены, скрипт запущен один раз.\n\n");sb.setSpan(new ForegroundColorSpan(0xFF8A919B),0,sb.length(),0);
+    for(String ln:s.split("\n")){int a=sb.length();sb.append(ln).append("\n");int c=ln.startsWith("✖")?ER:ln.startsWith("⏱")?WR:0;if(c!=0)sb.setSpan(new ForegroundColorSpan(c),a,sb.length(),0);else if(ln.startsWith("• "))sb.setSpan(new ForegroundColorSpan(AC),a,a+1,0);}
+    tv.setText(sb);tv.setTypeface(Typeface.MONOSPACE);tv.setTextSize(13);tv.setPadding(dp(16),dp(8),dp(16),dp(8));tv.setTextIsSelectable(true);
+    ScrollView v=new ScrollView(this);v.addView(tv);new AlertDialog.Builder(this).setTitle("Виртуальный запуск").setView(v).setPositiveButton("OK",null).show();}
+}
